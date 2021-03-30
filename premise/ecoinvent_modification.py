@@ -22,13 +22,16 @@ from .cement import Cement
 from .steel import Steel
 from .cars import Cars
 from .export import Export
-from .utils import eidb_label, add_modified_tags
+from .utils import eidb_label, add_modified_tags, build_superstructure_db
 import wurst
 from pathlib import Path
 import copy
+import uuid
 import os
 import contextlib
 import pickle
+from datetime import date
+
 
 
 FILEPATH_CARMA_INVENTORIES = INVENTORY_DIR / "lci-Carma-CCS.xlsx"
@@ -147,6 +150,7 @@ LIST_IMAGE_REGIONS = [
     "USA",
     "WAF",
     "WEU",
+    'World'
 ]
 
 LIST_TRANSF_FUNC = [
@@ -192,7 +196,7 @@ def check_pathway_name(name, filepath, model):
 
         if (filepath / name_check).with_suffix(".mif").is_file():
             return name
-        elif (filepath / name_check).with_suffix(".xls").is_file():
+        elif (filepath / name_check).with_suffix(".xlsx").is_file():
             return name
         else:
             raise ValueError(
@@ -227,7 +231,6 @@ def check_year(year):
 
     return year
 
-
 def check_filepath(path):
     if not Path(path).is_dir():
         raise FileNotFoundError(f"The IAM output directory {path} could not be found.")
@@ -245,7 +248,6 @@ def check_exclude(list_exc):
         )
     else:
         return list_exc
-
 
 
 def check_fleet(fleet, model, vehicle_type):
@@ -339,7 +341,6 @@ def check_db_version(version):
     else:
         return version
 
-
 def check_scenarios(scenario):
 
     if not all(name in scenario for name in ["model", "pathway", "year"]):
@@ -376,7 +377,6 @@ def check_scenarios(scenario):
         scenario["trucks"] = False
 
     return scenario
-
 
 class NewDatabase:
     """
@@ -547,8 +547,6 @@ class NewDatabase:
 
             print("Done!\n")
 
-
-
     def update_electricity(self):
 
         print("\n/////////////////// ELECTRICITY ////////////////////")
@@ -654,8 +652,6 @@ class NewDatabase:
                     )
                     scenario["database"] = crs.update_cars()
 
-
-
     def update_trucks(self):
 
         print("\n/////////////////// MEDIUM AND HEAVY DUTY TRUCKS ////////////////////")
@@ -679,7 +675,6 @@ class NewDatabase:
                        )
                     scenario["database"] = trucks.merge_inventory()
 
-
     def update_solar_PV(self):
         print("\n/////////////////// SOLAR PV ////////////////////")
 
@@ -701,6 +696,21 @@ class NewDatabase:
         self.update_cement()
         self.update_steel()
 
+    def write_superstructure_db_to_brightway(self, name=f"super_db_{date.today()}", filepath=None):
+        """
+        Register a super-structure database, according to https://github.com/dgdekoning/brightway-superstructure
+        :return: filepath of the "scenarios difference file"
+        """
+
+        #return build_superstructure_db(self.db, self.scenarios, db_name=name, fp=filepath)
+        self.db = build_superstructure_db(self.db, self.scenarios, db_name=name, fp=filepath)
+
+        print("Done!")
+
+        wurst.write_brightway2_database(
+            self.db,
+            name,
+        )
 
     def write_db_to_brightway(self, name=None):
         """
