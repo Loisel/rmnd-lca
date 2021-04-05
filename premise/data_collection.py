@@ -135,6 +135,8 @@ class IAMDataCollection:
                 "Secondary Energy",
                 "Efficiency",
                 "Final Energy",
+                "Production",
+                "Emissions"
             )
         else:
             raise ValueError("The IAM model name {} is not valid. Currently supported: 'remind' or 'image'".format(self.model))
@@ -367,7 +369,7 @@ class IAMDataCollection:
         # Finally, if the specified year falls in between two periods provided by the IAM
         else:
             # Interpolation between two periods
-            return self.gains_data.sel(sector="CEMENT").interp(year=self.year)
+            return self.gains_data.sel(sector="CEMENT")
 
     def get_gains_steel_emissions(self):
         """
@@ -388,4 +390,4 @@ class IAMDataCollection:
         # Finally, if the specified year falls in between two periods provided by the IAM
         else:
             # Interpolation between two periods
-            return self.gains_data.sel(sector="STEEL").interp(year=self.year)
+            return self.gains_data.sel(sector="STEEL")
