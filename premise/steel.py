@@ -23,7 +23,7 @@ class Steel:
     :vartype iam_data: xarray.DataArray
     :ivar year: year, from :attr:`.NewDatabase.year`
     :vartype year: int
-    
+
     """
 
     def __init__(self, db, model, iam_data, year):
@@ -241,7 +241,7 @@ class Steel:
                     else:
                         exc['location'] = act['location']
 
-    def update_pollutant_emissions(self, ds):
+    def update_steel_pollutant_emissions(self, ds):
         """
         Update pollutant emissions based on GAINS data.
         We apply a correction factor defined as being equal to
@@ -303,6 +303,52 @@ class Steel:
                     wurst.rescale_exchange(exc, correction_factor)
 
                 exc["comment"] = "This exchange has been modified based on GAINS projections for the steel sector by `premise`."
+        return ds
+
+
+    def update_GAINS_pollutant_emissions(self, ds, gains_sector):
+        """
+        Update pollutant emissions based on GAINS data.
+        We apply a correction factor defined as being equal to
+        the emission level in the year in question, compared
+        to 2020
+        :return:
+        """
+
+        gains_data = self.iam_data.sel(sector=gains_sector)
+        # Update biosphere exchanges according to GAINS emission values
+        for exc in ws.biosphere(
+                ds, ws.either(*[ws.contains("name", x) for x in self.emissions_map])
+            ):
+            remind_emission_label = self.emissions_map[exc["name"]]
+
+            if self.model == "remind":
+                loc = self.geo.ecoinvent_to_iam_location(ds["location"])
+
+                correction_factor = (gains_data.loc[
+                                         dict(
+                                             region="CHA" if loc == "World" else loc,
+                                             pollutant=remind_emission_label
+                                         )
+                                     ].interp(year=self.year)
+                                     /
+                                     gains_data.loc[
+                                         dict(
+                                             region="CHA" if loc == "World" else loc,
+                                             pollutant=remind_emission_label,
+                                             year=2020
+                                         )
+                                     ]).values.item(0)
+
+                if correction_factor != 0 and ~np.isnan(correction_factor):
+                    if exc["amount"] == 0:
+                        wurst.rescale_exchange(
+                            exc, correction_factor / 1, remove_uncertainty=True
+                        )
+                    else:
+                        wurst.rescale_exchange(exc, correction_factor)
+
+                    exc["comment"] = "This exchange has been modified based on GAINS projections for the steel sector by `premise`."
         return ds
 
     def adjust_recycled_steel_share(self, dict_act):
@@ -649,7 +695,7 @@ class Steel:
     def generate_activities(self, industry_module_present=True):
         """
         This function generates new activities for primary and secondary steel production and add them to the ecoinvent db.
-        
+
         :return: Returns a modified database with newly added steel activities for the corresponding year
         """
 
@@ -768,7 +814,7 @@ class Steel:
                             d_act_steel[steel][ds]["exchanges"].extend(new_exchanges)
 
                     # Update hot pollutant emission according to GAINS
-                    self.update_pollutant_emissions(d_act_steel[steel][ds])
+                    self.update_steel_pollutant_emissions(d_act_steel[steel][ds])
 
                 self.db.extend([v for v in d_act_steel[steel].values()])
 
@@ -791,7 +837,7 @@ class Steel:
                                 ws.contains("name", "steel production, electric")),
                       ws.contains("reference product", "steel")]
             ):
-                self.update_pollutant_emissions(ds)
+                self.update_steel_pollutant_emissions(ds)
 
 
             # Create new steel markets with adjusted secondary steel supply
@@ -801,6 +847,40 @@ class Steel:
             self.relink_to_new_steel_markets()
 
         return self.db
+
+
+    def update_non_steel_pollutants(self):
+        # coking
+        for ds in ws.get_many(
+            self.db,
+                *[ws.equals("name", "coking")]
+            ):
+                self.update_GAINS_pollutant_emissions(ds, "End_Use_Industry_Coal")
+        # iron sintering
+        for ds in ws.get_many(
+            self.db,
+                *[ws.equals("name", "iron sinter production")]
+            ):
+                self.update_GAINS_pollutant_emissions(ds, "STEEL")
+        # industrial heat
+        for ds in ws.get_many(
+            self.db,
+                *[ws.contains("name", "heat production, at hard coal industrial furnace")]
+            ):
+                self.update_GAINS_pollutant_emissions(ds, "End_Use_Industry_Coal")
+        # generators for mining
+        for ds in ws.get_many(
+            self.db,
+                *[ws.contains("name", "diesel, burned in diesel-electric generating set")]
+            ):
+                self.update_GAINS_pollutant_emissions(ds, "Power_Gen_HLF")
+        # aluminium
+        for ds in ws.get_many(
+            self.db,
+                *[ws.contains("name", "aluminium production, primary")]
+            ):
+                self.update_GAINS_pollutant_emissions(ds, "CUSM")
+
 
     def create_new_steel_markets(self):
 
@@ -1331,5 +1411,3 @@ class Steel:
 
                         else:
                             ds["exchanges"].extend(new_exc)
-
-
