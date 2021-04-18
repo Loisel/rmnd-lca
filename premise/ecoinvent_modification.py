@@ -16,7 +16,9 @@ from .inventory_imports import (
     CarculatorInventory,
     TruckInventory,
     VariousVehicles,
-    AdditionalInventory
+    AdditionalInventory,
+    PassengerCars,
+    Trucks
 )
 from .cement import Cement
 from .steel import Steel
@@ -32,6 +34,7 @@ import os
 import contextlib
 import pickle
 from datetime import date
+import uuid
 
 
 
@@ -97,7 +100,7 @@ FILE_PATH_INVENTORIES_EI_36 = INVENTORY_DIR / "inventory_data_ei_36.pickle"
 FILE_PATH_INVENTORIES_EI_35 = INVENTORY_DIR / "inventory_data_ei_35.pickle"
 
 SUPPORTED_EI_VERSIONS = ["3.5", "3.6", "3.7", "3.7.1"]
-SUPPORTED_MODELS = ["remind", "image", "static"]
+SUPPORTED_MODELS = ["remind", "image"]
 SUPPORTED_PATHWAYS = [
     "SSP2-Base",
     "SSP2-NDC",
@@ -105,6 +108,9 @@ SUPPORTED_PATHWAYS = [
     "SSP2-PkBudg900",
     "SSP2-PkBudg1100",
     "SSP2-PkBudg1300",
+    "SSP2-PkBudg900_Elec",
+    "SSP2-PkBudg1100_Elec",
+    "SSP2-PkBudg1300_Elec",
     "SSP2-RCP26",
     "SSP2-RCP19",
     "static",
@@ -201,6 +207,8 @@ def check_pathway_name(name, filepath, model):
             return name
         elif (filepath / name_check).with_suffix(".xlsx").is_file():
             return name
+        elif (filepath / name_check).with_suffix(".csv").is_file():
+            return name
         else:
             raise ValueError(
                 f"Only {SUPPORTED_PATHWAYS} are currently supported, not {name}."
@@ -215,11 +223,12 @@ def check_pathway_name(name, filepath, model):
             return name
         elif (filepath / name_check).with_suffix(".xlsx").is_file():
             return name
+        elif (filepath / name_check).with_suffix(".csv").is_file():
+            return name
         else:
             raise ValueError(
                 f"Cannot find the IAM scenario file at this location: {filepath / name_check}."
             )
-
 
 def check_year(year):
     try:
@@ -252,11 +261,10 @@ def check_exclude(list_exc):
     else:
         return list_exc
 
-
 def check_fleet(fleet, model, vehicle_type):
     if "fleet file" not in fleet:
         print(
-            f"No fleet composition file is provided for {vehicle_type}."
+            f"No fleet composition file is provided for {vehicle_type}.\n"
             "Fleet average vehicles will be built using default fleet projection."
         )
 
@@ -344,7 +352,7 @@ def check_db_version(version):
     else:
         return version
 
-def check_scenarios(scenario):
+def check_scenarios(scenario, key):
 
     if not all(name in scenario for name in ["model", "pathway", "year"]):
         raise ValueError(
@@ -356,7 +364,13 @@ def check_scenarios(scenario):
         filepath = scenario["filepath"]
         scenario["filepath"] = check_filepath(filepath)
     else:
-        scenario["filepath"] = DATA_DIR / "iam_output_files"
+        if key is not None:
+            scenario["filepath"] = DATA_DIR / "iam_output_files"
+        else:
+            raise PermissionError("You will need to provide a decryption key "
+                                  "if you want to use the IAM scenario files included "
+                                  "in premise. If you do not have a key, "
+                                  "please contact the developers.")
 
     scenario["model"] = check_model_name(scenario["model"])
     scenario["pathway"] = check_pathway_name(scenario["pathway"], scenario["filepath"], scenario["model"])
@@ -397,9 +411,10 @@ class NewDatabase:
     def __init__(
         self,
         scenarios,
-        source_db=None,
         source_version="3.7.1",
         source_type="brightway",
+        key=None,
+        source_db=None,
         source_file_path=None,
         additional_inventories=None,
         direct_import=True
@@ -414,7 +429,7 @@ class NewDatabase:
         else:
             self.source_file_path = None
 
-        self.scenarios = [check_scenarios(scenario) for scenario in scenarios]
+        self.scenarios = [check_scenarios(scenario, key) for scenario in scenarios]
 
         if additional_inventories:
             self.additional_inventories = check_additional_inventories(additional_inventories)
@@ -436,8 +451,11 @@ class NewDatabase:
                 pathway=scenario["pathway"],
                 year=scenario["year"],
                 filepath_iam_files=scenario["filepath"],
+                key=key
             )
             scenario["database"] = copy.deepcopy(self.db)
+
+        self.import_vehicle_inventories()
 
     def clean_database(self):
         """
@@ -448,6 +466,53 @@ class NewDatabase:
         return DatabaseCleaner(
             self.source, self.source_type, self.source_file_path
         ).prepare_datasets()
+
+    def import_vehicle_inventories(self):
+
+        # if no fleet file is specified
+        # we unpickle default vehicle inventories as well
+        # but those are model and scenario-specific
+
+        for scenario in self.scenarios:
+            if not scenario["passenger_cars"]:
+
+                pc = PassengerCars(
+                    database=scenario["database"],
+                    version=self.version,
+                    model=scenario["model"],
+                    year=scenario["year"],
+                    regions=LIST_REMIND_REGIONS if scenario["model"] == "remind" else LIST_IMAGE_REGIONS
+                )
+
+                scenario["database"] = pc.merge_inventory()
+
+                crs = Cars(
+                    db=scenario["database"],
+                    iam_data=scenario["external data"],
+                    pathway=scenario["pathway"],
+                    year=scenario["year"],
+                    model=scenario["model"],
+                )
+                scenario["database"] = crs.update_cars()
+
+            else:
+                self.update_cars()
+
+            if not scenario["trucks"]:
+
+                trucks = Trucks(
+                    database=scenario["database"],
+                    version=self.version,
+                    model=scenario["model"],
+                    year=scenario["year"],
+                    regions=LIST_REMIND_REGIONS if scenario["model"] == "remind" else LIST_IMAGE_REGIONS
+                )
+
+                scenario["database"] = trucks.merge_inventory()
+
+            else:
+                self.update_trucks()
+
 
     def import_inventories(self, direct_import):
         """
@@ -634,19 +699,18 @@ class NewDatabase:
         for scenario in self.scenarios:
             if "exclude" not in scenario or "update_cars" not in scenario["exclude"]:
 
-                if scenario["passenger_cars"]:
+                if "passenger_cars" in scenario:
 
                     # Import `carculator` inventories if wanted
                     cars = CarculatorInventory(
                         database=scenario["database"],
                         version=self.version,
-                        path=scenario["filepath"],
                         fleet_file=scenario["passenger_cars"]["fleet file"],
                         model=scenario["model"],
-                        pathway=scenario["pathway"],
                         year=scenario["year"],
                         regions=scenario["passenger_cars"]["regions"],
                         filters=scenario["passenger_cars"]["filters"],
+                        iam_data=scenario["external data"].data
                     )
                     scenario["database"] = cars.merge_inventory()
 
@@ -665,20 +729,19 @@ class NewDatabase:
 
         for scenario in self.scenarios:
             if "exclude" not in scenario or "update_trucks" not in scenario["exclude"]:
-                if scenario["trucks"]:
+                if "trucks" in scenario:
 
                     # Import `carculator_truck` inventories if wanted
 
                     trucks = TruckInventory(
                         database=scenario["database"],
                         version=self.version,
-                        path=scenario["filepath"],
                         fleet_file=scenario["trucks"]["fleet file"],
                         model=scenario["model"],
-                        pathway=scenario["pathway"],
                         year=scenario["year"],
                         regions=scenario["trucks"]["regions"],
                         filters=scenario["trucks"]["filters"],
+                        iam_data=scenario["external data"].data
                        )
                     scenario["database"] = trucks.merge_inventory()
 
