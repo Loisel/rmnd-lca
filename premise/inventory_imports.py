@@ -1316,7 +1316,7 @@ class CarculatorInventory(BaseInventoryImport):
 
             if allocate_all_synfuels:
                 share_synfuel = self.data.sel(
-                    variables=["SE|Liquids|Hydrogen"]
+                    variables=["FE|Transport|Liquids|Hydrogen"]
                 ) / self.data.sel(variables="FE|Transport|Pass|Road|LDV|Liquids")
 
                 share_liquids = self.data.sel(
