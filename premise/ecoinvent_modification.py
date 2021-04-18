@@ -21,6 +21,7 @@ from .inventory_imports import (
 from .cement import Cement
 from .steel import Steel
 from .cars import Cars
+from .gains import apply_gains_ef_improvements
 from .export import Export
 from .utils import eidb_label, add_modified_tags, build_superstructure_db
 import wurst
@@ -690,6 +691,14 @@ class NewDatabase:
                 print("Update efficiency of solar PVs.\n")
                 scenario["database"] = solar_PV.update_efficiency_of_solar_PV()
 
+    def update_hot_pollutant_emissions(self):
+        print("\n/////////////////// GAINS EF Improvements ////////////////////")
+
+        for scenario in self.scenarios:
+            apply_gains_ef_improvements(
+                scenario["year"], scenario["database"],
+                scenario["model"], scenario["external data"])
+
     def update_all(self):
         """
         Shortcut method to execute all transformation functions.
@@ -701,6 +710,7 @@ class NewDatabase:
         self.update_solar_PV()
         self.update_cement()
         self.update_steel()
+        self.update_hot_pollutant_emissions()
 
     def write_superstructure_db_to_brightway(self, name=f"super_db_{date.today()}", filepath=None):
         """
